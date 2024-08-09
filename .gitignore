@@ -11,3 +11,5 @@ pubspec.lock
 
 # VSCode configuration files
 .vscode/
+.history/
+.failed_tracker

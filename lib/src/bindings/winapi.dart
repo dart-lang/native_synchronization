@@ -10,6 +10,8 @@ final class SRWLOCK extends Opaque {}
 
 final class CONDITION_VARIABLE extends Opaque {}
 
+/// SWRLocks
+
 @Native<Void Function(Pointer<SRWLOCK>)>()
 external void InitializeSRWLock(Pointer<SRWLOCK> lock);
 
@@ -19,6 +21,7 @@ external void AcquireSRWLockExclusive(Pointer<SRWLOCK> lock);
 @Native<Void Function(Pointer<SRWLOCK>)>()
 external void ReleaseSRWLockExclusive(Pointer<SRWLOCK> mutex);
 
+/// Condition Variables
 @Native<Void Function(Pointer<CONDITION_VARIABLE>)>()
 external void InitializeConditionVariable(Pointer<CONDITION_VARIABLE> condVar);
 
@@ -30,3 +33,6 @@ external int SleepConditionVariableSRW(Pointer<CONDITION_VARIABLE> condVar,
 
 @Native<Void Function(Pointer<CONDITION_VARIABLE>)>()
 external void WakeConditionVariable(Pointer<CONDITION_VARIABLE> condVar);
+
+@Native<Long Function()>()
+external int GetLastError();

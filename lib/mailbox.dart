@@ -7,8 +7,8 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
-import 'package:native_synchronization/primitives.dart';
-import 'package:native_synchronization/sendable.dart';
+import 'primitives.dart';
+import 'sendable.dart';
 
 final class _MailboxRepr extends Struct {
   external Pointer<Uint8> buffer;
@@ -49,9 +49,11 @@ class Mailbox {
   static const _stateFull = 1;
   static const _stateClosed = 2;
 
-  static final finalizer = Finalizer((Pointer<_MailboxRepr> mailbox) {
-    calloc.free(mailbox.ref.buffer);
-    calloc.free(mailbox);
+  static final finalizer = Finalizer((mailbox) {
+    final p = mailbox! as Pointer<_MailboxRepr>;
+    calloc
+      ..free(p.ref.buffer)
+      ..free(p);
   });
 
   Mailbox()
@@ -102,10 +104,59 @@ class Mailbox {
 
   /// Take a message from the mailbox.
   ///
-  /// If mailbox is empty then [take] will synchronously block until message
-  /// is available or mailbox is closed. If mailbox is closed then [take] will
-  /// throw [StateError].
-  Uint8List take() => _mutex.runLocked(() {
+  /// If the mailbox is empty this will synchronously block until message
+  /// is available or a timeout occurs.
+  /// If the mailbox is closed then [take] will throw [StateError].
+  ///
+  /// If not [timeout] is provided then this method will block
+  /// indefinitely.
+  ///
+  /// If [timeout] is provided then this will block for at most [timeout].
+  /// If the timeout expires before a message is available then this will
+  /// throw a [TimeoutException].
+  /// The [timeout] supports a resolution of microseconds.
+  Uint8List take({Duration? timeout}) {
+    if (timeout != null) {
+      return _takeTimed(timeout);
+    } else {
+      return _take();
+    }
+  }
+
+  Uint8List _takeTimed(final Duration timeout) {
+    final start = DateTime.now();
+
+    return _mutex.runLocked(
+      timeout: timeout,
+      () {
+        /// Wait for an item to be posted into the mailbox.
+        while (_mailbox.ref.state == _stateEmpty) {
+          final remainingTime = _remainingTime(timeout, start);
+          _condVar.wait(_mutex, timeout: remainingTime);
+        }
+        if (_mailbox.ref.state == _stateClosed) {
+          throw StateError('Mailbox is closed');
+        }
+
+        final result = _toList(_mailbox.ref.buffer, _mailbox.ref.bufferLength);
+
+        _mailbox.ref.state = _stateEmpty;
+        _mailbox.ref.buffer = nullptr;
+        _mailbox.ref.bufferLength = 0;
+        return result;
+      },
+    );
+  }
+
+  Duration _remainingTime(Duration timeout, DateTime start) {
+    var remainingTime = timeout - (DateTime.now().difference(start));
+    if (remainingTime < Duration.zero) {
+      remainingTime = Duration.zero;
+    }
+    return remainingTime;
+  }
+
+  Uint8List _take() => _mutex.runLocked(() {
         while (_mailbox.ref.state == _stateEmpty) {
           _condVar.wait(_mutex);
         }
@@ -137,8 +188,8 @@ class Mailbox {
       return asTypedList(length, finalizer: malloc.nativeFree);
     }
 
-    final result = Uint8List(length);
-    result.setRange(0, length, buffer.asTypedList(length));
+    final result = Uint8List(length)
+      ..setRange(0, length, buffer.asTypedList(length));
     malloc.free(buffer);
     return result;
   }

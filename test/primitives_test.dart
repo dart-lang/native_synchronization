@@ -2,6 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -18,6 +19,15 @@ void main() {
       expect(mutex.runLocked(() => 42), equals(42));
     });
 
+    /// Helper Isolate to test mutex locking.
+    /// This Isolate will wait for the main isolate to set the value
+    /// of the [ptrAddress]to 2.
+    ///
+    /// @param ptrAddress The address of the pointer to set to 2.
+    /// @param sendableMutex The mutex to use.
+    ///
+    /// Returns success
+    ///
     Future<String> spawnHelperIsolate(
         int ptrAddress, Sendable<Mutex> sendableMutex) {
       return Isolate.run(() {
@@ -25,13 +35,13 @@ void main() {
         final mutex = sendableMutex.materialize();
 
         while (true) {
-          sleep(Duration(milliseconds: 10));
+          sleep(const Duration(milliseconds: 10));
           if (mutex.runLocked(() {
             if (ptr.value == 2) {
               return true;
             }
             ptr.value = 0;
-            sleep(Duration(milliseconds: 500));
+            sleep(const Duration(milliseconds: 500));
             ptr.value = 1;
             return false;
           })) {
@@ -61,10 +71,36 @@ void main() {
           })) {
             break;
           }
-          await Future.delayed(const Duration(milliseconds: 10));
+          await Future.delayed(const Duration(milliseconds: 10), () {});
         }
         expect(await helperResult, equals('success'));
       });
+    });
+
+    test('Timeout', () async {
+      final mutex = Mutex();
+
+      unawaited(
+          spawnLockedMutex(mutex.asSendable, const Duration(seconds: 10)));
+
+      /// give the isoalte a chance to start.
+      sleep(const Duration(seconds: 2));
+
+      /// force a timeout
+      expect(
+          () => mutex.runLocked(timeout: const Duration(seconds: 3), () {
+                sleep(const Duration(milliseconds: 100));
+                return true;
+              }),
+          throwsA(isA<TimeoutException>()));
+
+      /// wait for the lock to be released.
+      expect(
+          mutex.runLocked(timeout: const Duration(seconds: 15), () {
+            sleep(const Duration(milliseconds: 100));
+            return true;
+          }),
+          isTrue);
     });
   });
 
@@ -72,7 +108,7 @@ void main() {
     Future<String> spawnHelperIsolate(
         int ptrAddress,
         Sendable<Mutex> sendableMutex,
-        Sendable<ConditionVariable> sendableCondVar) {
+        Sendable<ConditionVariable> sendableCondVar) async {
       return Isolate.run(() {
         final ptr = Pointer<Uint8>.fromAddress(ptrAddress);
         final mutex = sendableMutex.materialize();
@@ -109,11 +145,32 @@ void main() {
           if (success) {
             break;
           }
-          await Future.delayed(const Duration(milliseconds: 20));
+          await Future.delayed(const Duration(milliseconds: 20), () {});
         }
 
         expect(await helperResult, equals('success'));
       });
     });
   });
+}
+
+/// Create an isolate that locks the mutex for [duration]
+Future<void> spawnLockedMutex(
+        Sendable<Mutex> sendableMutex, Duration duration) async =>
+    Isolate.run<void>(() {
+      final mutex = sendableMutex.materialize();
+      log('Isolate started');
+
+      mutex.runLocked(() {
+        log('isolate spawnLockedMutext has lock');
+        // await Future.delayed(duration);
+        sleep(duration);
+        log('isolate spawnLockedMutext returning');
+        return true;
+      });
+      log('runLock completed');
+    });
+
+void log(String message) {
+  print('${DateTime.now()}: $message');
 }

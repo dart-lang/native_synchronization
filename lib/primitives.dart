@@ -16,14 +16,15 @@
 ///     * [Condition Variables](https://learn.microsoft.com/en-us/windows/win32/sync/condition-variables),
 library;
 
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
-import 'package:native_synchronization/sendable.dart';
 
-import 'package:native_synchronization/src/bindings/pthread.dart';
-import 'package:native_synchronization/src/bindings/winapi.dart';
+import 'sendable.dart';
+import 'src/bindings/pthread.dart';
+import 'src/bindings/winapi.dart';
 
 part 'posix.dart';
 part 'windows.dart';
@@ -46,11 +47,15 @@ sealed class Mutex implements Finalizable {
   ///
   /// If this mutex is already acquired then an attempt to acquire it
   /// blocks the current thread until the mutex is released by the
-  /// current owner.
+  /// current owner or the timeout expires.
+  ///
+  /// If no [timeout] is supplied then the method waits indefinitely.
+  ///
+  /// If the [timeout] expires then a [TimeoutException] is thrown.
   ///
   /// **Warning**: attempting to hold a mutex across asynchronous suspension
   /// points will lead to undefined behavior and potentially crashes.
-  void _lock();
+  void _lock({Duration? timeout});
 
   /// Release exclusive ownership of this mutex.
   ///
@@ -59,13 +64,15 @@ sealed class Mutex implements Finalizable {
   void _unlock();
 
   /// Run the given synchronous `action` under a mutex.
+  /// The lock will return if the lock is gained.
+  /// If a timeout occurs then a [TimeoutException] is thrown.
   ///
   /// This function takes exclusive ownership of the mutex, executes `action`
   /// and then releases the mutex. It returns the value returned by `action`.
   ///
   /// **Warning**: you can't combine `runLocked` with an asynchronous code.
-  R runLocked<R>(R Function() action) {
-    _lock();
+  R runLocked<R>(R Function() action, {Duration? timeout}) {
+    _lock(timeout: timeout);
     try {
       return action();
     } finally {
@@ -102,7 +109,11 @@ sealed class ConditionVariable implements Finalizable {
   /// `mutex` must be a [Mutex] object exclusively held by the current thread.
   /// It will be released and the thread will block until another thread
   /// calls [notify].
-  void wait(Mutex mutex);
+  ///
+  /// if a [timeout] is passed and it expires
+  /// then a [TimeoutException] is thrown.
+  /// Timeout resolution to microseconds is supported.
+  void wait(Mutex mutex, {Duration? timeout});
 
   /// Wake up at least one thread waiting on this condition variable.
   void notify();

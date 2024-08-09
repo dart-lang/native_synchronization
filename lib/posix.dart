@@ -4,6 +4,10 @@
 
 part of 'primitives.dart';
 
+/// Posix timeout error number.
+// ignore: constant_identifier_names
+const ETIMEDOUT = 110;
+
 class _PosixMutex extends Mutex {
   /// This is maximum value of `sizeof(pthread_mutex_t)` across all supported
   /// platforms.
@@ -31,8 +35,25 @@ class _PosixMutex extends Mutex {
         super._();
 
   @override
-  void _lock() {
-    if (pthread_mutex_lock(_impl) != 0) {
+  void _lock({Duration? timeout}) {
+    if (timeout == null) {
+      if (pthread_mutex_lock(_impl) != 0) {
+        throw StateError('Failed to lock mutex');
+      }
+    } else {
+      _timedLock(timeout);
+    }
+  }
+
+  void _timedLock(Duration timeout) {
+    var timespec = _allocateTimespec(timeout);
+    final result = pthread_mutex_timedlock(_impl, timespec);
+    malloc.free(timespec);
+
+    if (result == ETIMEDOUT) {
+      throw TimeoutException('Timed out waiting for Mutex lock');
+    }
+    if (result != 0) {
       throw StateError('Failed to lock mutex');
     }
   }
@@ -82,12 +103,51 @@ class _PosixConditionVariable extends ConditionVariable {
   }
 
   @override
-  void wait(covariant _PosixMutex mutex) {
-    if (pthread_cond_wait(_impl, mutex._impl) != 0) {
+  void wait(covariant _PosixMutex mutex, {Duration? timeout}) {
+    if (timeout == null) {
+      if (pthread_cond_wait(_impl, mutex._impl) != 0) {
+        throw StateError('Failed to wait on a condition variable');
+      }
+    } else {
+      _timedWait(timeout, mutex);
+    }
+  }
+
+  /// Waits on a condition variable with a timeout.
+  void _timedWait(Duration timeout, _PosixMutex mutex) {
+    final wakeUpTime = _allocateTimespec(timeout);
+    final result = pthread_cond_timedwait(_impl, mutex._impl, wakeUpTime);
+
+    malloc.free(wakeUpTime);
+
+    if (result == ETIMEDOUT) {
+      throw TimeoutException('Timed out waiting for conditional variable');
+    }
+
+    if (result != 0) {
       throw StateError('Failed to wait on a condition variable');
     }
   }
 
   @override
   int get _address => _impl.address;
+}
+
+/// Create a posix timespec from a [timeout].
+/// The returned [pthread_timespec_t] must be freed by a call
+/// to [malloc.free]
+Pointer<pthread_timespec_t> _allocateTimespec(Duration timeout) {
+  final timespec =
+      malloc.allocate<pthread_timespec_t>(sizeOf<pthread_timespec_t>());
+
+  /// calculate the absolute timeout in microseconds
+  final microSecondsSinceEpoc = DateTime.now().microsecondsSinceEpoch;
+  final wakupTime = microSecondsSinceEpoc + timeout.inMicroseconds;
+
+  /// seconds since the epoc to wait until.
+  timespec.ref.tv_sec = wakupTime ~/ 1000000;
+
+  /// additional nano-seconds after tv_sec to wait
+  timespec.ref.tv_nsec = (wakupTime % 1000000) * 1000;
+  return timespec;
 }
